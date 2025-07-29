@@ -8,7 +8,9 @@ import time
 class_names = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
 
 # Load ONNX model using Ultralytics
-model_path = "E:/Work/KSA/Model1/mask_hairnet_v1/weights/best.onnx"
+# model_path = "E:/Work/KSA/Model1/mask_hairnet_v1/weights/best.onnx"
+model_path = "best.onnx"
+
 model = YOLO(model_path, task="detect")
 
 # Draw bounding boxes with color and label
