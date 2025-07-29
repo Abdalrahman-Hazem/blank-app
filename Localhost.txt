@@ -1,0 +1,5 @@
+http://localhost:8501
+
+conda activate MaskHairNetProjectYOLOv8
+cd E:/Work/KSA/Model1/
+streamlit run streamlit_app.py
