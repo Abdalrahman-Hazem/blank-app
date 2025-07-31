@@ -24,32 +24,43 @@ def preprocess(image):
     return image
 
 # --- Postprocessing ---
-def postprocess(preds, input_shape, orig_shape, conf_thresh=0.3):
+def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
     boxes, scores, class_ids = [], [], []
     input_h, input_w = input_shape
     orig_h, orig_w = orig_shape
 
+    max_confidences = []
     for pred in preds:
-        if pred[4] < conf_thresh:
+        if len(pred) < 6:
             continue
 
-        scores_all = pred[5:]
-        cls_id = np.argmax(scores_all)
-        cls_score = scores_all[cls_id]
-        conf = pred[4] * cls_score
+        x, y, w, h, obj_conf = pred[:5]
+        class_confs = pred[5:]
+        cls = np.argmax(class_confs)
+        conf = obj_conf * class_confs[cls]
+
+        max_confidences.append(conf)
+
         if conf < conf_thresh:
             continue
 
-        x_center, y_center, w, h = pred[:4]
-        x1 = int((x_center - w / 2) / input_w * orig_w)
-        y1 = int((y_center - h / 2) / input_h * orig_h)
-        x2 = int((x_center + w / 2) / input_w * orig_w)
-        y2 = int((y_center + h / 2) / input_h * orig_h)
+        # Convert center x/y, width/height to top-left x1, y1 and bottom-right x2, y2
+        x1 = x - w / 2
+        y1 = y - h / 2
+        x2 = x + w / 2
+        y2 = y + h / 2
+
+        # Scale back to original image dimensions
+        x1 = int(x1 / input_w * orig_w)
+        y1 = int(y1 / input_h * orig_h)
+        x2 = int(x2 / input_w * orig_w)
+        y2 = int(y2 / input_h * orig_h)
 
         boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
-        class_ids.append(int(cls_id))
+        class_ids.append(int(cls))
 
+    print(f"Max confidences in image: {sorted(max_confidences, reverse=True)[:10]}")
     return boxes, scores, class_ids
 
 # --- Draw results ---
