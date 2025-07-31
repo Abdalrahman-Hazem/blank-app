@@ -45,8 +45,8 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
-    st.image("result.jpg", caption="Detection", use_container_width=True)
 
+    # ONNX Inference
     session = ort.InferenceSession("best.onnx", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
 
@@ -56,7 +56,7 @@ if uploaded_file:
     boxes, scores, class_ids = postprocess(preds, image_np.shape[:2], input_shape)
     result_img, counts = draw_boxes(image_np.copy(), boxes, scores, class_ids)
 
-    st.image(result_img, caption="Detected", use_column_width=True)
+    st.image(result_img, caption="Detected", use_container_width=True)
     st.subheader("📊 Class Counts")
     for cls, count in counts.items():
         if count > 0:
