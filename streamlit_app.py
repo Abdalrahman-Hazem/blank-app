@@ -4,29 +4,50 @@ import streamlit as st
 import onnxruntime as ort
 from PIL import Image
 
+# Config
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
 CONFIDENCE_THRESHOLD = 0.25
-input_shape = (640, 640)
+NMS_THRESHOLD = 0.45
+input_shape = (640, 640)  # (width, height)
 
 def preprocess(image):
-    image = cv2.resize(image, input_shape)
-    image = image.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32) / 255.0
-    return image
+    image_resized = cv2.resize(image, input_shape)
+    image_input = image_resized.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32) / 255.0
+    return image_input
 
 def postprocess(preds, orig_shape, input_shape):
     preds = preds.squeeze().T  # (8400, 8)
-    boxes, scores, class_ids = [], [], []
+    boxes, confidences, class_ids = [], [], []
+
     for pred in preds:
         x1, y1, x2, y2 = pred[:4]
         cls_scores = pred[4:]
         class_id = int(np.argmax(cls_scores))
         confidence = cls_scores[class_id]
+
         if confidence > CONFIDENCE_THRESHOLD and class_id < len(CLASS_NAMES):
-            scale_x, scale_y = orig_shape[1] / input_shape[1], orig_shape[0] / input_shape[0]
-            boxes.append([int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)])
-            scores.append(float(confidence))
+            boxes.append([x1, y1, x2 - x1, y2 - y1])  # x, y, w, h
+            confidences.append(float(confidence))
             class_ids.append(class_id)
-    return boxes, scores, class_ids
+
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, CONFIDENCE_THRESHOLD, NMS_THRESHOLD)
+    final_boxes, final_scores, final_classes = [], [], []
+
+    if len(indices) > 0:
+        scale_x = orig_shape[1] / input_shape[0]
+        scale_y = orig_shape[0] / input_shape[1]
+
+        for i in indices.flatten():
+            x, y, w, h = boxes[i]
+            x1 = int(x * scale_x)
+            y1 = int(y * scale_y)
+            x2 = int((x + w) * scale_x)
+            y2 = int((y + h) * scale_y)
+            final_boxes.append([x1, y1, x2, y2])
+            final_scores.append(confidences[i])
+            final_classes.append(class_ids[i])
+
+    return final_boxes, final_scores, final_classes
 
 def draw_boxes(image, boxes, scores, class_ids):
     counts = {cls: 0 for cls in CLASS_NAMES}
@@ -34,30 +55,38 @@ def draw_boxes(image, boxes, scores, class_ids):
         label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
         color = (0, 255, 0)
         cv2.rectangle(image, box[:2], box[2:], color, 2)
-        cv2.putText(image, label, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(image, label, (box[0], box[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         counts[CLASS_NAMES[cls_id]] += 1
     return image, counts
 
-# ✅ Streamlit UI
-st.title("Mask & Hairnet Detection (YOLOv8-ONNX)")
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+# 🔘 Streamlit App
+st.title("🛡️ Mask & Hairnet Detection (YOLOv8-ONNX)")
+uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
+    # Load and show uploaded image
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
+    st.image(image, caption="🖼️ Original Image", use_container_width=True)
 
-    # ONNX Inference
+    # Load model
     session = ort.InferenceSession("best.onnx", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
 
+    # Inference
     img_input = preprocess(image_np)
     preds = session.run(None, {input_name: img_input})[0]
 
+    # Postprocess
     boxes, scores, class_ids = postprocess(preds, image_np.shape[:2], input_shape)
     result_img, counts = draw_boxes(image_np.copy(), boxes, scores, class_ids)
 
-    st.image(result_img, caption="Detected", use_container_width=True)
-    st.subheader("📊 Class Counts")
+    # Show detection
+    st.image(result_img, caption="🎯 Detected Image", use_container_width=True)
+
+    # Class-wise count
+    st.subheader("📊 Detection Summary")
     for cls, count in counts.items():
         if count > 0:
             st.write(f"**{cls}**: {count}")
