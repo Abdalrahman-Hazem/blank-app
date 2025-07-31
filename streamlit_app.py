@@ -36,17 +36,18 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh):
         x, y, w, h, obj_conf = pred[:5]
         class_confs = pred[5:]
         cls = np.argmax(class_confs)
-        conf = obj_conf * class_confs[cls]
+        class_score = class_confs[cls]
+        conf = obj_conf * class_score
 
-        if conf < conf_thresh:
-            continue
+        # REMOVE confidence filtering for debugging
+        # if conf < conf_thresh:
+        #     continue
 
         x1 = x - w / 2
         y1 = y - h / 2
         x2 = x + w / 2
         y2 = y + h / 2
 
-        # Rescale to original image size
         x1 = int(x1 / input_w * orig_w)
         y1 = int(y1 / input_h * orig_h)
         x2 = int(x2 / input_w * orig_w)
@@ -57,6 +58,7 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh):
         class_ids.append(int(cls))
 
     return boxes, scores, class_ids
+
 
 # --- Draw boxes ---
 def draw_boxes(image, boxes, scores, class_ids):
