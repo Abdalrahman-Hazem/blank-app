@@ -2,7 +2,6 @@ import streamlit as st
 import numpy as np
 import cv2
 import onnxruntime as ort
-import time
 from collections import Counter
 
 # ---- Config ----
@@ -31,7 +30,7 @@ def postprocess(outputs):
     predictions = outputs[0][0]
 
     for pred in predictions:
-        pred = pred[:6]  # only use first 6 values
+        pred = pred[:6]  # keep only first 6 elements
         x1, y1, x2, y2, conf, cls = pred
         if conf < CONFIDENCE_THRESHOLD:
             continue
@@ -44,6 +43,9 @@ def postprocess(outputs):
 def draw_boxes(image, boxes, scores, class_ids):
     counter = Counter()
     for box, score, cls_id in zip(boxes, scores, class_ids):
+        if cls_id < 0 or cls_id >= len(CLASS_NAMES):
+            continue  # Skip unknown classes
+
         label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
         color = (0, 255, 0)
         x1, y1, x2, y2 = box
@@ -57,69 +59,24 @@ def draw_boxes(image, boxes, scores, class_ids):
 st.set_page_config(page_title="Mask & Hairnet Detection (ONNX)", layout="wide")
 st.title("😷 Mask & Hairnet Detection (ONNX Runtime)")
 
-mode = st.radio("Select input mode", ["🖼 Upload Image", "📷 Webcam", "🌐 IP Camera"])
 confidence = st.sidebar.slider("Confidence Threshold", 0.25, 1.0, 0.5, 0.05)
 CONFIDENCE_THRESHOLD = confidence
 
-# === Upload Image ===
-if mode == "🖼 Upload Image":
-    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-    if uploaded_file:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        original_image = cv2.imdecode(file_bytes, 1)
-        image_for_model = preprocess(original_image)
+uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
 
-        outputs = session.run(None, {input_name: image_for_model})
-        boxes, scores, class_ids = postprocess(outputs)
+if uploaded_file:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    original_image = cv2.imdecode(file_bytes, 1)
+    image_for_model = preprocess(original_image)
 
-        image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
-        st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections")
+    outputs = session.run(None, {input_name: image_for_model})
+    boxes, scores, class_ids = postprocess(outputs)
 
-        st.sidebar.subheader("Detections")
-        for cls, count in counts.items():
-            st.sidebar.write(f"{cls}: {count}")
-        if not counts:
-            st.sidebar.write("No detections.")
+    image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
+    st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections")
 
-# === Webcam or IP Camera ===
-elif mode in ["📷 Webcam", "🌐 IP Camera"]:
-    rtsp_url = ""
-    if mode == "🌐 IP Camera":
-        rtsp_url = st.text_input("Enter IP Camera RTSP URL", "rtsp://...")
-
-    run = st.checkbox("Start Stream")
-    stop = st.button("Stop Stream")
-    stframe = st.empty()
-
-    if run:
-        source = rtsp_url if mode == "🌐 IP Camera" and rtsp_url.strip() else 0
-        cap = cv2.VideoCapture(source)
-
-        if not cap.isOpened():
-            st.error("❌ Could not open video stream.")
-        else:
-            prev_time = time.time()
-            while cap.isOpened() and not stop:
-                ret, frame = cap.read()
-                if not ret:
-                    st.warning("⚠️ Failed to read frame.")
-                    break
-
-                resized = cv2.resize(frame, (INPUT_WIDTH, INPUT_HEIGHT))
-                input_tensor = preprocess(resized)
-                outputs = session.run(None, {input_name: input_tensor})
-                boxes, scores, class_ids = postprocess(outputs)
-
-                output_frame, counts = draw_boxes(frame.copy(), boxes, scores, class_ids)
-
-                # FPS overlay
-                curr_time = time.time()
-                fps = 1 / (curr_time - prev_time)
-                prev_time = curr_time
-                cv2.putText(output_frame, f"FPS: {fps:.2f}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-
-                stframe.image(cv2.cvtColor(output_frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-
-            cap.release()
-            st.success("✅ Stream ended.")
+    st.sidebar.subheader("📊 Class Counts")
+    for cls, count in counts.items():
+        st.sidebar.write(f"{cls}: {count}")
+    if not counts:
+        st.sidebar.write("No detections.")
