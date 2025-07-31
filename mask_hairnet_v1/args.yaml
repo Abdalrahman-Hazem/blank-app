@@ -16,7 +16,7 @@ project: E:/Work/KSA/Model1
 name: mask_hairnet_v1
 exist_ok: false
 pretrained: true
-optimizer: auto
+optimizer: AdamW
 verbose: true
 seed: 0
 deterministic: true
@@ -36,8 +36,8 @@ dropout: 0.0
 val: true
 split: val
 save_json: false
-conf: null
-iou: 0.7
+conf: 0.001
+iou: 0.45
 max_det: 300
 half: false
 dnn: false
@@ -76,8 +76,8 @@ weight_decay: 0.0005
 warmup_epochs: 3.0
 warmup_momentum: 0.8
 warmup_bias_lr: 0.1
-box: 7.5
-cls: 0.5
+box: true
+cls: true
 dfl: 1.5
 pose: 12.0
 kobj: 1.0
