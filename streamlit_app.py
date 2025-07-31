@@ -3,8 +3,6 @@ import numpy as np
 import streamlit as st
 import onnxruntime as ort
 from PIL import Image
-import torch
-from torchvision.ops import nms  # Use torchvision for reliable NMS
 
 # Config
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
@@ -19,22 +17,55 @@ def preprocess(image):
     return normalized[np.newaxis, :, :, :]  # Add batch dimension
 
 def xywh2xyxy(box):
-    """Convert [cx, cy, w, h] to [x1, y1, x2, y2]"""
-    cx, cy, w, h = box
-    return [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]
+    """Convert YOLO (x_center, y_center, w, h) to (x1, y1, x2, y2)"""
+    x_c, y_c, w, h = box
+    return [x_c - w / 2, y_c - h / 2, x_c + w / 2, y_c + h / 2]
+
+def iou(box1, box2):
+    """Compute IoU between two boxes"""
+    x1, y1, x2, y2 = box1
+    x1g, y1g, x2g, y2g = box2
+
+    inter_x1 = max(x1, x1g)
+    inter_y1 = max(y1, y1g)
+    inter_x2 = min(x2, x2g)
+    inter_y2 = min(y2, y2g)
+
+    inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+
+    area1 = max(0, x2 - x1) * max(0, y2 - y1)
+    area2 = max(0, x2g - x1g) * max(0, y2g - y1g)
+
+    union_area = area1 + area2 - inter_area + 1e-6
+    return inter_area / union_area
+
+def non_max_suppression(boxes, scores, threshold):
+    """Pure NumPy NMS"""
+    indices = np.argsort(scores)[::-1]
+    keep = []
+
+    while len(indices) > 0:
+        current = indices[0]
+        keep.append(current)
+        remaining = indices[1:]
+
+        ious = np.array([iou(boxes[current], boxes[i]) for i in remaining])
+        indices = remaining[ious < threshold]
+
+    return keep
 
 def postprocess(preds, original_shape):
     preds = preds.squeeze().T  # (8400, 8)
     boxes, scores, class_ids = [], [], []
 
     for pred in preds:
-        x_center, y_center, w, h = pred[:4]
+        x_c, y_c, w, h = pred[:4]
         cls_scores = pred[4:]
         class_id = int(np.argmax(cls_scores))
         confidence = cls_scores[class_id]
 
         if confidence > CONFIDENCE_THRESHOLD and class_id < len(CLASS_NAMES):
-            box = xywh2xyxy([x_center, y_center, w, h])
+            box = xywh2xyxy([x_c, y_c, w, h])
             boxes.append(box)
             scores.append(confidence)
             class_ids.append(class_id)
@@ -42,22 +73,23 @@ def postprocess(preds, original_shape):
     if not boxes:
         return [], [], []
 
-    boxes_np = torch.tensor(boxes)
-    scores_np = torch.tensor(scores)
-    indices = nms(boxes_np, scores_np, NMS_THRESHOLD)
+    boxes = np.array(boxes)
+    scores = np.array(scores)
+    keep_indices = non_max_suppression(boxes, scores, NMS_THRESHOLD)
 
     final_boxes, final_scores, final_classes = [], [], []
     scale_x = original_shape[1] / INPUT_SIZE[0]
     scale_y = original_shape[0] / INPUT_SIZE[1]
 
-    for i in indices:
-        x1, y1, x2, y2 = boxes_np[i]
-        x1 = int(x1 * scale_x)
-        y1 = int(y1 * scale_y)
-        x2 = int(x2 * scale_x)
-        y2 = int(y2 * scale_y)
-        final_boxes.append([x1, y1, x2, y2])
-        final_scores.append(float(scores_np[i]))
+    for i in keep_indices:
+        x1, y1, x2, y2 = boxes[i]
+        final_boxes.append([
+            int(x1 * scale_x),
+            int(y1 * scale_y),
+            int(x2 * scale_x),
+            int(y2 * scale_y)
+        ])
+        final_scores.append(float(scores[i]))
         final_classes.append(class_ids[i])
 
     return final_boxes, final_scores, final_classes
