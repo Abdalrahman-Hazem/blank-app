@@ -28,29 +28,40 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
     input_h, input_w = input_shape
     orig_h, orig_w = orig_shape
 
-    for pred in preds:
+    for i, pred in enumerate(preds):
         if len(pred) < 6:
             continue
 
+        # YOLOv8 format: x_center, y_center, width, height, obj_conf, cls1_conf, cls2_conf, ...
         x, y, w, h = pred[:4]
         obj_conf = sigmoid(pred[4])
-        class_confs = sigmoid(pred[5:])
-        cls = np.argmax(class_confs)
-        cls_conf = class_confs[cls]
-        conf = obj_conf * cls_conf
+        class_probs = sigmoid(pred[5:])
+        cls_id = np.argmax(class_probs)
+        cls_conf = class_probs[cls_id]
 
+        conf = obj_conf * cls_conf
         if conf < conf_thresh:
             continue
 
-        # Convert to corner coordinates and scale to original image size
-        x1 = int((x - w / 2) * orig_w / input_w)
-        y1 = int((y - h / 2) * orig_h / input_h)
-        x2 = int((x + w / 2) * orig_w / input_w)
-        y2 = int((y + h / 2) * orig_h / input_h)
+        # Get box coordinates in the model's scale (0-640)
+        x1 = x - w / 2
+        y1 = y - h / 2
+        x2 = x + w / 2
+        y2 = y + h / 2
+
+        # Scale boxes to original image shape
+        x1 = int(x1 / input_w * orig_w)
+        y1 = int(y1 / input_h * orig_h)
+        x2 = int(x2 / input_w * orig_w)
+        y2 = int(y2 / input_h * orig_h)
+
+        # Clamp box coordinates
+        x1, y1 = max(x1, 0), max(y1, 0)
+        x2, y2 = min(x2, orig_w), min(y2, orig_h)
 
         boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
-        class_ids.append(int(cls))
+        class_ids.append(int(cls_id))
 
     return boxes, scores, class_ids
 
@@ -85,6 +96,7 @@ if uploaded_file:
 
         outputs = session.run(None, {input_name: image_input})
         preds = np.squeeze(outputs[0])  # Shape: (8400, 8)
+        st.write("Sample confidences:", preds[:5, 5:])
         boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape)
 
         image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
