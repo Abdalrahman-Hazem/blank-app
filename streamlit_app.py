@@ -3,13 +3,13 @@ import numpy as np
 import cv2
 import onnxruntime as ort
 from collections import Counter
+import time
 
 # ---- Config ----
 MODEL_PATH = "best.onnx"
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
 INPUT_WIDTH = 640
 INPUT_HEIGHT = 640
-CONFIDENCE_THRESHOLD = 0.25
 
 # ---- Load ONNX Model ----
 session = ort.InferenceSession(MODEL_PATH)
@@ -42,13 +42,11 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
         if conf < conf_thresh:
             continue
 
-        # Convert center x/y, width/height to top-left x1, y1 and bottom-right x2, y2
         x1 = x - w / 2
         y1 = y - h / 2
         x2 = x + w / 2
         y2 = y + h / 2
 
-        # Scale back to original image dimensions
         x1 = int(x1 / input_w * orig_w)
         y1 = int(y1 / input_h * orig_h)
         x2 = int(x2 / input_w * orig_w)
@@ -65,8 +63,7 @@ def draw_boxes(image, boxes, scores, class_ids):
     counter = Counter()
     for box, score, cls_id in zip(boxes, scores, class_ids):
         if cls_id < 0 or cls_id >= len(CLASS_NAMES):
-            continue  # Skip unknown classes
-
+            continue
         label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
         color = (0, 255, 0)
         x1, y1, x2, y2 = box
@@ -78,26 +75,67 @@ def draw_boxes(image, boxes, scores, class_ids):
 
 # ---- Streamlit UI ----
 st.set_page_config(page_title="Mask & Hairnet Detection (ONNX)", layout="wide")
-st.title("😷 Mask & Hairnet Detection (ONNX Runtime)")
+st.title("😷 Mask & Hairnet Detection")
 
 confidence = st.sidebar.slider("Confidence Threshold", 0.25, 1.0, 0.5, 0.05)
-CONFIDENCE_THRESHOLD = confidence
 
-uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
+option = st.radio("Select Input Type", ["🖼 Upload Image", "📷 Webcam", "🌐 IP Camera"])
 
-if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    original_image = cv2.imdecode(file_bytes, 1)
-    image_for_model = preprocess(original_image)
+# === Upload Image ===
+if option == "🖼 Upload Image":
+    uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
+    if uploaded_file:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        original_image = cv2.imdecode(file_bytes, 1)
+        image_for_model = preprocess(original_image)
 
-    outputs = session.run(None, {input_name: image_for_model})
-    boxes, scores, class_ids = postprocess(outputs)
+        outputs = session.run(None, {input_name: image_for_model})
+        input_shape = (INPUT_HEIGHT, INPUT_WIDTH)
+        orig_shape = original_image.shape[:2]
+        boxes, scores, class_ids = postprocess(outputs[0][0], input_shape, orig_shape, confidence)
 
-    image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
-    st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections")
+        image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
+        st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections")
 
-    st.sidebar.subheader("📊 Class Counts")
-    for cls, count in counts.items():
-        st.sidebar.write(f"{cls}: {count}")
-    if not counts:
-        st.sidebar.write("No detections.")
+        st.sidebar.subheader("📊 Class Counts")
+        for cls, count in counts.items():
+            st.sidebar.write(f"{cls}: {count}")
+        if not counts:
+            st.sidebar.write("No detections.")
+
+# === Webcam or IP Camera ===
+elif option in ["📷 Webcam", "🌐 IP Camera"]:
+    ip_url = ""
+    if option == "🌐 IP Camera":
+        ip_url = st.text_input("Enter RTSP/HTTP URL:", "rtsp://...")
+    run = st.checkbox("Start Video Stream")
+
+    if run:
+        cap = cv2.VideoCapture(0 if option == "📷 Webcam" else ip_url)
+        stframe = st.empty()
+        prev_time = time.time()
+
+        if not cap.isOpened():
+            st.error("❌ Failed to open video stream.")
+        else:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    st.warning("⚠️ Can't read frame. Stream may have ended.")
+                    break
+
+                image_for_model = preprocess(frame)
+                outputs = session.run(None, {input_name: image_for_model})
+                input_shape = (INPUT_HEIGHT, INPUT_WIDTH)
+                orig_shape = frame.shape[:2]
+                boxes, scores, class_ids = postprocess(outputs[0][0], input_shape, orig_shape, confidence)
+                frame_with_boxes, _ = draw_boxes(frame.copy(), boxes, scores, class_ids)
+
+                fps = 1.0 / (time.time() - prev_time)
+                prev_time = time.time()
+                cv2.putText(frame_with_boxes, f"FPS: {fps:.2f}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+                stframe.image(cv2.cvtColor(frame_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB")
+
+            cap.release()
