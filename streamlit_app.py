@@ -6,7 +6,7 @@ from collections import Counter
 
 # --- Config ---
 MODEL_PATH = "best.onnx"
-CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
+CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask-and-hairnet', 'mask']
 INPUT_WIDTH = 640
 INPUT_HEIGHT = 640
 
@@ -30,11 +30,11 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.3):
     orig_h, orig_w = orig_shape
 
     for pred in preds:
-        if len(pred) != 8:
-            continue
+        if len(pred) <= 5:
+            continue  # Invalid prediction
 
-        x, y, w, h, obj_conf, c0, c1, c2 = pred
-        class_confs = [c0, c1, c2]
+        x, y, w, h, obj_conf = pred[:5]
+        class_confs = pred[5:]
         cls_id = int(np.argmax(class_confs))
         cls_conf = class_confs[cls_id]
         conf = obj_conf * cls_conf
@@ -42,19 +42,19 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.3):
         if conf < conf_thresh:
             continue
 
-        # Convert xywh to x1y1x2y2 and scale to original image
-        x1 = (x - w / 2) / input_w * orig_w
-        y1 = (y - h / 2) / input_h * orig_h
-        x2 = (x + w / 2) / input_w * orig_w
-        y2 = (y + h / 2) / input_h * orig_h
+        # Convert to x1, y1, x2, y2 and scale to original image size
+        x1 = int((x - w / 2) / input_w * orig_w)
+        y1 = int((y - h / 2) / input_h * orig_h)
+        x2 = int((x + w / 2) / input_w * orig_w)
+        y2 = int((y + h / 2) / input_h * orig_h)
 
-        boxes.append([int(x1), int(y1), int(x2), int(y2)])
+        boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
         class_ids.append(cls_id)
 
     return boxes, scores, class_ids
 
-# --- Draw results ---
+# --- Draw Results ---
 def draw_boxes(image, boxes, scores, class_ids):
     counter = Counter()
     for box, score, cls_id in zip(boxes, scores, class_ids):
@@ -84,8 +84,8 @@ if uploaded_file:
     image_for_model = preprocess(original_image)
 
     outputs = session.run(None, {input_name: image_for_model})
-    raw_output = outputs[0]                   # (1, 8, 8400)
-    preds = np.squeeze(raw_output).T          # (8400, 8)
+    raw_output = outputs[0]                   # (1, num_classes+5, 8400)
+    preds = np.squeeze(raw_output).T          # (8400, num_classes+5)
 
     boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape)
 
