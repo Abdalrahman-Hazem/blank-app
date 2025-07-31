@@ -25,18 +25,39 @@ def preprocess(image):
     return image
 
 # ---- Postprocessing ----
-def postprocess(outputs):
+def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
     boxes, scores, class_ids = [], [], []
-    predictions = outputs[0][0]
+    input_h, input_w = input_shape
+    orig_h, orig_w = orig_shape
 
-    for pred in predictions:
-        pred = pred[:6]  # keep only first 6 elements
-        x1, y1, x2, y2, conf, cls = pred
-        if conf < CONFIDENCE_THRESHOLD:
+    for pred in preds:
+        if len(pred) < 6:
             continue
-        boxes.append([int(x1), int(y1), int(x2), int(y2)])
+
+        x, y, w, h, obj_conf = pred[:5]
+        class_confs = pred[5:]
+        cls = np.argmax(class_confs)
+        conf = obj_conf * class_confs[cls]
+
+        if conf < conf_thresh:
+            continue
+
+        # Convert center x/y, width/height to top-left x1, y1 and bottom-right x2, y2
+        x1 = x - w / 2
+        y1 = y - h / 2
+        x2 = x + w / 2
+        y2 = y + h / 2
+
+        # Scale back to original image dimensions
+        x1 = int(x1 / input_w * orig_w)
+        y1 = int(y1 / input_h * orig_h)
+        x2 = int(x2 / input_w * orig_w)
+        y2 = int(y2 / input_h * orig_h)
+
+        boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
         class_ids.append(int(cls))
+
     return boxes, scores, class_ids
 
 # ---- Draw Results ----
