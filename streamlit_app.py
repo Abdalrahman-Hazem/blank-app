@@ -36,33 +36,27 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=CONFIDENCE_THRESHOLD
         if len(pred) < 6:
             continue
 
-        x, y, w, h, obj_conf = pred[:5]
+        x, y, w, h, obj_conf = map(float, pred[:5])
         class_confs = pred[5:]
-        cls = np.argmax(class_confs)
-        conf = obj_conf * class_confs[cls]
+        cls = int(np.argmax(class_confs))
+        class_conf = float(class_confs[cls])
+        conf = obj_conf * class_conf
 
         max_confidences.append(conf)
 
         if conf < conf_thresh:
             continue
 
-        # Convert center x/y, width/height to x1, y1, x2, y2
-        x1 = x - w / 2
-        y1 = y - h / 2
-        x2 = x + w / 2
-        y2 = y + h / 2
-
-        # Scale to original image dimensions
-        x1 = int(x1 / input_w * orig_w)
-        y1 = int(y1 / input_h * orig_h)
-        x2 = int(x2 / input_w * orig_w)
-        y2 = int(y2 / input_h * orig_h)
+        x1 = int((x - w / 2) / input_w * orig_w)
+        y1 = int((y - h / 2) / input_h * orig_h)
+        x2 = int((x + w / 2) / input_w * orig_w)
+        y2 = int((y + h / 2) / input_h * orig_h)
 
         boxes.append([x1, y1, x2, y2])
-        scores.append(float(conf))
-        class_ids.append(int(cls))
+        scores.append(conf)
+        class_ids.append(cls)
 
-    print(f"🔍 Max confidences (top 10): {sorted(max_confidences, reverse=True)[:10]}")
+    print("Top 10 Confidences:", sorted(max_confidences, reverse=True)[:10])
     return boxes, scores, class_ids
 
 # --- Draw results ---
@@ -71,7 +65,7 @@ def draw_boxes(image, boxes, scores, class_ids):
     for box, score, cls_id in zip(boxes, scores, class_ids):
         if cls_id < 0 or cls_id >= len(CLASS_NAMES):
             continue
-        label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
+        label = f"{CLASS_NAMES[cls_id]}: {score:.4f}"
         color = (0, 255, 0)
         x1, y1, x2, y2 = box
         cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
