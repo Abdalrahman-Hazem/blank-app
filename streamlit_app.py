@@ -9,13 +9,13 @@ MODEL_PATH = "best.onnx"
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
 INPUT_WIDTH = 640
 INPUT_HEIGHT = 640
-CONFIDENCE_THRESHOLD = 0.001  # very low to debug
+CONFIDENCE_THRESHOLD = 0.01  # VERY low for debugging
 
-# --- Load ONNX model ---
+# --- Load Model ---
 session = ort.InferenceSession(MODEL_PATH)
 input_name = session.get_inputs()[0].name
 
-# --- Preprocessing ---
+# --- Preprocess ---
 def preprocess(image):
     image = cv2.resize(image, (INPUT_WIDTH, INPUT_HEIGHT))
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -24,25 +24,26 @@ def preprocess(image):
     image = np.expand_dims(image, axis=0)   # Add batch dim
     return image
 
-# --- Postprocessing ---
-def postprocess(preds, input_shape, orig_shape, conf_thresh=CONFIDENCE_THRESHOLD):
+# --- Postprocess with Debugging ---
+def postprocess(preds, input_shape, orig_shape, conf_thresh=0.01):
     boxes, scores, class_ids = [], [], []
     input_h, input_w = input_shape
     orig_h, orig_w = orig_shape
-
-    max_confidences = []
 
     for pred in preds:
         if len(pred) < 6:
             continue
 
-        x, y, w, h, obj_conf = map(float, pred[:5])
+        x, y, w, h, obj_conf = pred[:5]
         class_confs = pred[5:]
-        cls = int(np.argmax(class_confs))
-        class_conf = float(class_confs[cls])
+        cls = np.argmax(class_confs)
+        class_conf = class_confs[cls]
+
+        # OPTION 1: True YOLOv8 style (Uncomment this in final version)
         conf = obj_conf * class_conf
 
-        max_confidences.append(conf)
+        # OPTION 2: Debug only – comment this out when done
+        # conf = class_conf
 
         if conf < conf_thresh:
             continue
@@ -53,21 +54,22 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=CONFIDENCE_THRESHOLD
         y2 = int((y + h / 2) / input_h * orig_h)
 
         boxes.append([x1, y1, x2, y2])
-        scores.append(conf)
-        class_ids.append(cls)
+        scores.append(float(conf))
+        class_ids.append(int(cls))
 
-    print("Top 10 Confidences:", sorted(max_confidences, reverse=True)[:10])
+        print(f"[DEBUG] obj_conf: {obj_conf:.3f}, class_conf: {class_conf:.3f}, final_conf: {conf:.3f}, class: {CLASS_NAMES[cls] if cls < len(CLASS_NAMES) else cls}")
+
     return boxes, scores, class_ids
 
-# --- Draw results ---
+# --- Draw ---
 def draw_boxes(image, boxes, scores, class_ids):
     counter = Counter()
     for box, score, cls_id in zip(boxes, scores, class_ids):
         if cls_id < 0 or cls_id >= len(CLASS_NAMES):
             continue
-        label = f"{CLASS_NAMES[cls_id]}: {score:.4f}"
-        color = (0, 255, 0)
+        label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
         x1, y1, x2, y2 = box
+        color = (0, 255, 0)
         cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
         cv2.putText(image, label, (x1, y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -89,17 +91,17 @@ if uploaded_file:
     image_for_model = preprocess(original_image)
 
     outputs = session.run(None, {input_name: image_for_model})
-    raw_output = outputs[0]                   # (1, 8, 8400)
-    preds = np.squeeze(raw_output).T          # (8400, 8)
+    raw_output = outputs[0]
+    preds = np.squeeze(raw_output).T  # (8400, 8)
 
-    boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape)
+    boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape, CONFIDENCE_THRESHOLD)
 
     image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
     st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), caption="Detections", channels="RGB", use_container_width=True)
 
-    st.subheader("📊 Class Counts")
+    st.sidebar.subheader("📊 Class Counts")
     if counts:
         for cls, count in counts.items():
-            st.write(f"{cls}: {count}")
+            st.sidebar.write(f"{cls}: {count}")
     else:
-        st.write("No detections found.")
+        st.sidebar.write("No detections found.")
