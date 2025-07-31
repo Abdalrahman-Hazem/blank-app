@@ -9,55 +9,44 @@ MODEL_PATH = "best.onnx"
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
 INPUT_WIDTH = 640
 INPUT_HEIGHT = 640
-CONFIDENCE_THRESHOLD = 0.01  # VERY low for debugging
+CONFIDENCE_THRESHOLD = 0.3
 
-# --- Load Model ---
-session = ort.InferenceSession(MODEL_PATH)
+# --- Load ONNX Model ---
+session = ort.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
 
 # --- Preprocess ---
 def preprocess(image):
-    image = cv2.resize(image, (INPUT_WIDTH, INPUT_HEIGHT))
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = image.astype(np.float32) / 255.0
-    image = np.transpose(image, (2, 0, 1))  # HWC to CHW
-    image = np.expand_dims(image, axis=0)   # Add batch dim
-    return image
+    resized = cv2.resize(image, (INPUT_WIDTH, INPUT_HEIGHT))
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    normalized = rgb.astype(np.float32) / 255.0
+    transposed = np.transpose(normalized, (2, 0, 1))
+    expanded = np.expand_dims(transposed, axis=0)
+    return expanded, resized.shape[:2]  # (input for model, original resized shape)
 
-# --- Postprocess with Debugging ---
-def postprocess(preds, input_shape, orig_shape, conf_thresh=0.01):
+# --- Postprocess ---
+def postprocess(predictions, input_shape, conf_thresh=CONFIDENCE_THRESHOLD):
     boxes, scores, class_ids = [], [], []
     input_h, input_w = input_shape
-    orig_h, orig_w = orig_shape
+    output = predictions[0].squeeze().T  # shape: (8400, 8)
 
-    for pred in preds:
-        if len(pred) < 6:
-            continue
-
-        x, y, w, h, obj_conf = pred[:5]
-        class_confs = pred[5:]
-        cls = np.argmax(class_confs)
-        class_conf = class_confs[cls]
-
-        # OPTION 1: True YOLOv8 style (Uncomment this in final version)
-        # conf = obj_conf * class_conf
-
-        # OPTION 2: Debug only – comment this out when done
-        conf = class_conf
+    for pred in output:
+        x, y, w, h, obj_conf, *class_probs = pred
+        cls = np.argmax(class_probs)
+        cls_conf = class_probs[cls]
+        conf = obj_conf * cls_conf
 
         if conf < conf_thresh:
             continue
 
-        x1 = int((x - w / 2) / input_w * orig_w)
-        y1 = int((y - h / 2) / input_h * orig_h)
-        x2 = int((x + w / 2) / input_w * orig_w)
-        y2 = int((y + h / 2) / input_h * orig_h)
+        x1 = int((x - w / 2) / input_w * INPUT_WIDTH)
+        y1 = int((y - h / 2) / input_h * INPUT_HEIGHT)
+        x2 = int((x + w / 2) / input_w * INPUT_WIDTH)
+        y2 = int((y + h / 2) / input_h * INPUT_HEIGHT)
 
         boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
         class_ids.append(int(cls))
-
-        print(f"[DEBUG] obj_conf: {obj_conf:.3f}, class_conf: {class_conf:.3f}, final_conf: {conf:.3f}, class: {CLASS_NAMES[cls] if cls < len(CLASS_NAMES) else cls}")
 
     return boxes, scores, class_ids
 
@@ -69,10 +58,8 @@ def draw_boxes(image, boxes, scores, class_ids):
             continue
         label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
         x1, y1, x2, y2 = box
-        color = (0, 255, 0)
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(image, label, (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(image, label, (x1, max(20, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         counter[CLASS_NAMES[cls_id]] += 1
     return image, counter
 
@@ -84,20 +71,14 @@ uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "p
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    original_image = cv2.imdecode(file_bytes, 1)
+    image = cv2.imdecode(file_bytes, 1)
 
-    input_shape = (INPUT_HEIGHT, INPUT_WIDTH)
-    orig_shape = original_image.shape[:2]
-    image_for_model = preprocess(original_image)
+    input_tensor, input_shape = preprocess(image)
+    predictions = session.run(None, {input_name: input_tensor})
+    boxes, scores, class_ids = postprocess(predictions, input_shape)
 
-    outputs = session.run(None, {input_name: image_for_model})
-    raw_output = outputs[0]
-    preds = np.squeeze(raw_output).T  # (8400, 8)
-
-    boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape, CONFIDENCE_THRESHOLD)
-
-    image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
-    st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), caption="Detections", channels="RGB", use_container_width=True)
+    result_img, counts = draw_boxes(image.copy(), boxes, scores, class_ids)
+    st.image(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections", use_container_width=True)
 
     st.sidebar.subheader("📊 Class Counts")
     if counts:
