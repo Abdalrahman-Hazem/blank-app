@@ -13,7 +13,7 @@ INPUT_SIZE = (640, 640)  # width, height
 def preprocess(image):
     resized = cv2.resize(image, INPUT_SIZE)
     normalized = resized.astype(np.float32) / 255.0
-    normalized = normalized.transpose(2, 0, 1)  # HWC -> CHW
+    normalized = normalized.transpose(2, 0, 1)  # HeightWidthChannels -> ChannelsHeightWidth
     return normalized[np.newaxis, :, :, :]  # Add batch dimension
 
 def xywh2xyxy(box):
@@ -22,7 +22,7 @@ def xywh2xyxy(box):
     return [x_c - w / 2, y_c - h / 2, x_c + w / 2, y_c + h / 2]
 
 def iou(box1, box2):
-    """Compute IoU between two boxes"""
+    """Compute Intersection over Union (IoU) between two boxes"""
     x1, y1, x2, y2 = box1
     x1g, y1g, x2g, y2g = box2
 
@@ -40,7 +40,7 @@ def iou(box1, box2):
     return inter_area / union_area
 
 def non_max_suppression(boxes, scores, threshold):
-    """Pure NumPy NMS"""
+    """Pure NumPy Non-Maximum Suppression (NMS)"""
     indices = np.argsort(scores)[::-1]
     keep = []
 
@@ -106,7 +106,7 @@ def draw_boxes(image, boxes, scores, class_ids):
     return image, counts
 
 # 🔘 Streamlit UI
-st.title("🛡️ Mask & Hairnet Detection (YOLOv8 ONNX)")
+st.title("🛡️ Mask & Hairnet Detection (YOLOv8m Model)")
 
 uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
 
