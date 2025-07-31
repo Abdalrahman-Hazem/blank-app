@@ -19,31 +19,34 @@ def preprocess(image):
     image_chw = np.transpose(image_rgb, (2, 0, 1))  # HWC to CHW
     return np.expand_dims(image_chw, axis=0).astype(np.float32)
 
-# --- Postprocessing ---
-def postprocess(preds, orig_shape, input_shape=(640, 640), conf_thresh=0.25):
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
     boxes, scores, class_ids = [], [], []
+    input_h, input_w = input_shape
+    orig_h, orig_w = orig_shape
 
-    preds = np.squeeze(preds).T  # (8400, 4+1+num_classes) = (8400, 8)
     for pred in preds:
-        if len(pred) < 6:
-            continue
-
-        x, y, w, h, obj_conf = pred[:5]
-        class_probs = pred[5:]
-        cls_id = np.argmax(class_probs)
-        conf = obj_conf * class_probs[cls_id]
+        x, y, w, h = pred[:4]
+        obj_conf = sigmoid(pred[4])
+        class_confs = sigmoid(pred[5:])
+        cls = np.argmax(class_confs)
+        cls_conf = class_confs[cls]
+        conf = obj_conf * cls_conf
 
         if conf < conf_thresh:
             continue
 
-        x1 = int((x - w / 2) / input_shape[1] * orig_shape[1])
-        y1 = int((y - h / 2) / input_shape[0] * orig_shape[0])
-        x2 = int((x + w / 2) / input_shape[1] * orig_shape[1])
-        y2 = int((y + h / 2) / input_shape[0] * orig_shape[0])
+        # Box conversion
+        x1 = int((x - w / 2) / input_w * orig_w)
+        y1 = int((y - h / 2) / input_h * orig_h)
+        x2 = int((x + w / 2) / input_w * orig_w)
+        y2 = int((y + h / 2) / input_h * orig_h)
 
         boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
-        class_ids.append(int(cls_id))
+        class_ids.append(int(cls))
 
     return boxes, scores, class_ids
 
