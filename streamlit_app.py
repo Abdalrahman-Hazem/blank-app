@@ -1,116 +1,63 @@
-import streamlit as st
-import numpy as np
 import cv2
+import numpy as np
+import streamlit as st
 import onnxruntime as ort
-from collections import Counter
+from PIL import Image
 
-# --- Configuration ---
-MODEL_PATH = "best.onnx"
 CLASS_NAMES = ['NO mask', 'NOhairnet', 'hairnet', 'mask']
-INPUT_SIZE = 640  # Width and height
-
-# --- Load ONNX model ---
-session = ort.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
-input_name = session.get_inputs()[0].name
-
-# --- Utils ---
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+CONFIDENCE_THRESHOLD = 0.25
+input_shape = (640, 640)
 
 def preprocess(image):
-    image_resized = cv2.resize(image, (INPUT_SIZE, INPUT_SIZE))
-    image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    image_chw = np.transpose(image_rgb, (2, 0, 1))  # HWC to CHW
-    return np.expand_dims(image_chw, axis=0).astype(np.float32)
+    image = cv2.resize(image, input_shape)
+    image = image.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32) / 255.0
+    return image
 
-def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
+def postprocess(preds, orig_shape, input_shape):
+    preds = preds.squeeze().T  # (8400, 8)
     boxes, scores, class_ids = [], [], []
-    input_h, input_w = input_shape
-    orig_h, orig_w = orig_shape
-
-    for i, pred in enumerate(preds):
-        if len(pred) < 6:
-            continue
-        
-        raw_obj = pred[4]
-        raw_cls_conf = pred[5:]
-        print(f"[{i:04d}] obj_conf_raw={raw_obj:.4f}  sigmoid={sigmoid(raw_obj):.4f}")
-        print(f"       cls_conf_raw={raw_cls_conf[:4]}  sigmoid={sigmoid(raw_cls_conf[:4])}")
-        
-        # YOLOv8 format: x_center, y_center, width, height, obj_conf, cls1_conf, cls2_conf, ...
-        x, y, w, h = pred[:4]
-        obj_conf = sigmoid(pred[4])
-        class_probs = sigmoid(pred[5:])
-        cls_id = np.argmax(class_probs)
-        cls_conf = class_probs[cls_id]
-
-        conf = obj_conf * cls_conf
-        if conf < conf_thresh:
-            continue
-
-        # Get box coordinates in the model's scale (0-640)
-        x1 = x - w / 2
-        y1 = y - h / 2
-        x2 = x + w / 2
-        y2 = y + h / 2
-
-        # Scale boxes to original image shape
-        x1 = int(x1 / input_w * orig_w)
-        y1 = int(y1 / input_h * orig_h)
-        x2 = int(x2 / input_w * orig_w)
-        y2 = int(y2 / input_h * orig_h)
-
-        # Clamp box coordinates
-        x1, y1 = max(x1, 0), max(y1, 0)
-        x2, y2 = min(x2, orig_w), min(y2, orig_h)
-
-        boxes.append([x1, y1, x2, y2])
-        scores.append(float(conf))
-        class_ids.append(int(cls_id))
-        print(f"Detected: {CLASS_NAMES[cls_id]} with confidence {conf:.2f} at [{x1}, {y1}, {x2}, {y2}]")
-        
+    for pred in preds:
+        x1, y1, x2, y2 = pred[:4]
+        cls_scores = pred[4:]
+        class_id = int(np.argmax(cls_scores))
+        confidence = cls_scores[class_id]
+        if confidence > CONFIDENCE_THRESHOLD and class_id < len(CLASS_NAMES):
+            scale_x, scale_y = orig_shape[1] / input_shape[1], orig_shape[0] / input_shape[0]
+            boxes.append([int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)])
+            scores.append(float(confidence))
+            class_ids.append(class_id)
     return boxes, scores, class_ids
 
 def draw_boxes(image, boxes, scores, class_ids):
-    counter = Counter()
+    counts = {cls: 0 for cls in CLASS_NAMES}
     for box, score, cls_id in zip(boxes, scores, class_ids):
-        if 0 <= cls_id < len(CLASS_NAMES):
-            label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
-            x1, y1, x2, y2 = box
-            color = (0, 255, 0)
-            cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(image, label, (x1, max(y1 - 10, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            counter[CLASS_NAMES[cls_id]] += 1
-    return image, counter
+        label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
+        color = (0, 255, 0)
+        cv2.rectangle(image, box[:2], box[2:], color, 2)
+        cv2.putText(image, label, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        counts[CLASS_NAMES[cls_id]] += 1
+    return image, counts
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Mask & Hairnet Detection", layout="wide")
-st.title("😷 Mask & Hairnet Detection (YOLOv8 ONNX)")
-
-uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
+# ✅ Streamlit UI
+st.title("Mask & Hairnet Detection (YOLOv8-ONNX)")
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    original_image = cv2.imdecode(file_bytes, 1)
-    if original_image is None:
-        st.error("❌ Could not read the image. Please upload a valid image.")
-    else:
-        orig_shape = original_image.shape[:2]  # (h, w)
-        input_shape = (INPUT_SIZE, INPUT_SIZE)
-        image_input = preprocess(original_image)
+    image = Image.open(uploaded_file).convert("RGB")
+    image_np = np.array(image)
+    st.image(image_np, caption="Uploaded Image", use_column_width=True)
 
-        outputs = session.run(None, {input_name: image_input})
-        preds = np.squeeze(outputs[0])  # Shape: (8400, 8)
-        st.write("Sample confidences:", preds[:5, 5:])
-        boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape)
+    session = ort.InferenceSession("best.onnx", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    input_name = session.get_inputs()[0].name
 
-        image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
-        st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), caption="🖼 Detections", use_container_width=True)
+    img_input = preprocess(image_np)
+    preds = session.run(None, {input_name: img_input})[0]
 
-        st.subheader("📊 Class Counts")
-        if counts:
-            for cls, count in counts.items():
-                st.write(f"{cls}: {count}")
-        else:
-            st.warning("No detections found.")
+    boxes, scores, class_ids = postprocess(preds, image_np.shape[:2], input_shape)
+    result_img, counts = draw_boxes(image_np.copy(), boxes, scores, class_ids)
+
+    st.image(result_img, caption="Detected", use_column_width=True)
+    st.subheader("📊 Class Counts")
+    for cls, count in counts.items():
+        if count > 0:
+            st.write(f"**{cls}**: {count}")
