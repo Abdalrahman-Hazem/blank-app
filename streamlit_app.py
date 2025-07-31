@@ -36,7 +36,6 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.3):
         scores_all = pred[5:]
         cls_id = np.argmax(scores_all)
         cls_score = scores_all[cls_id]
-
         conf = pred[4] * cls_score
         if conf < conf_thresh:
             continue
@@ -85,7 +84,8 @@ if uploaded_file:
     image_for_model = preprocess(original_image)
 
     outputs = session.run(None, {input_name: image_for_model})
-    preds = outputs[0][0]  # (N, 84)
+    raw_output = outputs[0]                   # (1, 8, 8400)
+    preds = np.squeeze(raw_output).T          # (8400, 8)
 
     boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape, confidence)
 
