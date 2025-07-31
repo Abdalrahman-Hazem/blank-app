@@ -40,10 +40,10 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.01):
         class_conf = class_confs[cls]
 
         # OPTION 1: True YOLOv8 style (Uncomment this in final version)
-        conf = obj_conf * class_conf
+        # conf = obj_conf * class_conf
 
         # OPTION 2: Debug only – comment this out when done
-        # conf = class_conf
+        conf = class_conf
 
         if conf < conf_thresh:
             continue
