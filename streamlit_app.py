@@ -88,11 +88,12 @@ if option == "🖼 Upload Image":
         file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
         original_image = cv2.imdecode(file_bytes, 1)
         image_for_model = preprocess(original_image)
-
+        
         outputs = session.run(None, {input_name: image_for_model})
         input_shape = (INPUT_HEIGHT, INPUT_WIDTH)
-        orig_shape = original_image.shape[:2]
-        boxes, scores, class_ids = postprocess(outputs[0][0], input_shape, orig_shape, confidence)
+        orig_shape = original_image.shape[:2]  # (h, w)
+        preds = outputs[0][0]  # Extract predictions
+        boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape, confidence)
 
         image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
         st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), channels="RGB", caption="Detections")
