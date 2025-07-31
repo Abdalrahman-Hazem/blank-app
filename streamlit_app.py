@@ -24,7 +24,7 @@ def preprocess(image):
     return image
 
 # --- Postprocessing ---
-def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
+def postprocess(preds, input_shape, orig_shape, conf_thresh=0.3):
     boxes, scores, class_ids = [], [], []
     input_h, input_w = input_shape
     orig_h, orig_w = orig_shape
@@ -42,19 +42,19 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
         if conf < conf_thresh:
             continue
 
-        # Convert center xywh to x1y1x2y2
-        x1 = int((x - w / 2) / input_w * orig_w)
-        y1 = int((y - h / 2) / input_h * orig_h)
-        x2 = int((x + w / 2) / input_w * orig_w)
-        y2 = int((y + h / 2) / input_h * orig_h)
+        # Convert xywh to x1y1x2y2 and scale to original image
+        x1 = (x - w / 2) / input_w * orig_w
+        y1 = (y - h / 2) / input_h * orig_h
+        x2 = (x + w / 2) / input_w * orig_w
+        y2 = (y + h / 2) / input_h * orig_h
 
-        boxes.append([x1, y1, x2, y2])
+        boxes.append([int(x1), int(y1), int(x2), int(y2)])
         scores.append(float(conf))
         class_ids.append(cls_id)
 
     return boxes, scores, class_ids
 
-# --- Draw bounding boxes ---
+# --- Draw results ---
 def draw_boxes(image, boxes, scores, class_ids):
     counter = Counter()
     for box, score, cls_id in zip(boxes, scores, class_ids):
@@ -73,8 +73,6 @@ def draw_boxes(image, boxes, scores, class_ids):
 st.set_page_config(page_title="Mask & Hairnet Detection", layout="wide")
 st.title("😷 Mask & Hairnet Detection (YOLOv8 ONNX)")
 
-confidence = st.sidebar.slider("Confidence Threshold", 0.2, 1.0, 0.3, 0.05)
-
 uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
@@ -86,10 +84,10 @@ if uploaded_file:
     image_for_model = preprocess(original_image)
 
     outputs = session.run(None, {input_name: image_for_model})
-    raw_output = outputs[0]              # (1, 8, 8400)
-    preds = np.squeeze(raw_output).T     # (8400, 8)
+    raw_output = outputs[0]                   # (1, 8, 8400)
+    preds = np.squeeze(raw_output).T          # (8400, 8)
 
-    boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape, confidence)
+    boxes, scores, class_ids = postprocess(preds, input_shape, orig_shape)
 
     image_with_boxes, counts = draw_boxes(original_image.copy(), boxes, scores, class_ids)
     st.image(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB), caption="Detections", channels="RGB", use_container_width=True)
