@@ -28,41 +28,63 @@ def postprocess(preds, original_shape):
         x1, y1, x2, y2 = pred[:4]
         cls_scores = pred[4:]
         class_id = int(np.argmax(cls_scores))
-        confidence = float(cls_scores[class_id])
+        confidence = cls_scores[class_id]
 
         if confidence > CONFIDENCE_THRESHOLD and class_id < len(CLASS_NAMES):
-            boxes.append([x1, y1, x2, y2])
+            boxes.append([x1, y1, x2, y2])  # Keep as floats for NMS
             confidences.append(confidence)
             class_ids.append(class_id)
 
+    # Manual NMS
     final_boxes, final_scores, final_classes = [], [], []
-    if boxes:
-        boxes_np = np.array(boxes)
-        scores_np = np.array(confidences)
+    if len(boxes):
+        boxes = np.array(boxes)
+        confidences = np.array(confidences)
+        class_ids = np.array(class_ids)
 
-        # Convert boxes to [x, y, w, h] for NMS
-        boxes_xywh = np.array([[x1, y1, x2 - x1, y2 - y1] for x1, y1, x2, y2 in boxes_np])
-        indices = cv2.dnn.NMSBoxes(
-            bboxes=boxes_xywh.tolist(),
-            scores=scores_np.tolist(),
-            score_threshold=CONFIDENCE_THRESHOLD,
-            nms_threshold=NMS_THRESHOLD
-        )
+        indices = sorted(range(len(confidences)), key=lambda i: confidences[i], reverse=True)
 
-        scale_x = original_shape[1] / INPUT_SIZE[0]
-        scale_y = original_shape[0] / INPUT_SIZE[1]
+        while indices:
+            best_idx = indices.pop(0)
+            best_box = boxes[best_idx]
+            keep = [best_idx]
 
-        for i in indices.flatten():
-            x1, y1, x2, y2 = boxes_np[i]
-            x1 = int(x1 * scale_x)
-            y1 = int(y1 * scale_y)
-            x2 = int(x2 * scale_x)
-            y2 = int(y2 * scale_y)
-            final_boxes.append([x1, y1, x2, y2])
-            final_scores.append(confidences[i])
-            final_classes.append(class_ids[i])
+            to_delete = []
+            for idx in indices:
+                if class_ids[idx] != class_ids[best_idx]:
+                    continue
+                iou = compute_iou(best_box, boxes[idx])
+                if iou > NMS_THRESHOLD:
+                    to_delete.append(idx)
+
+            indices = [i for i in indices if i not in to_delete]
+
+            # Scale box back to original image size
+            x1, y1, x2, y2 = boxes[best_idx]
+            scale_x = original_shape[1] / INPUT_SIZE[0]
+            scale_y = original_shape[0] / INPUT_SIZE[1]
+            final_boxes.append([
+                int(x1 * scale_x), int(y1 * scale_y),
+                int(x2 * scale_x), int(y2 * scale_y)
+            ])
+            final_scores.append(float(confidences[best_idx]))
+            final_classes.append(int(class_ids[best_idx]))
 
     return final_boxes, final_scores, final_classes
+
+def compute_iou(box1, box2):
+    # Intersection over Union (IOU) between two boxes
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+
+    inter_area = max(0, x2 - x1) * max(0, y2 - y1)
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    union_area = box1_area + box2_area - inter_area
+
+    return inter_area / union_area if union_area > 0 else 0
 
 # Draw bounding boxes
 def draw_boxes(image, boxes, scores, class_ids):
