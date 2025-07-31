@@ -45,7 +45,7 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
-    st.image(image_np, caption="Uploaded Image", use_column_width=True)
+    st.image("result.jpg", caption="Detection", use_container_width=True)
 
     session = ort.InferenceSession("best.onnx", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
