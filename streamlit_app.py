@@ -31,7 +31,12 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
     for i, pred in enumerate(preds):
         if len(pred) < 6:
             continue
-
+        
+        raw_obj = pred[4]
+        raw_cls_conf = pred[5:]
+        print(f"[{i:04d}] obj_conf_raw={raw_obj:.4f}  sigmoid={sigmoid(raw_obj):.4f}")
+        print(f"       cls_conf_raw={raw_cls_conf[:4]}  sigmoid={sigmoid(raw_cls_conf[:4])}")
+        
         # YOLOv8 format: x_center, y_center, width, height, obj_conf, cls1_conf, cls2_conf, ...
         x, y, w, h = pred[:4]
         obj_conf = sigmoid(pred[4])
@@ -62,14 +67,8 @@ def postprocess(preds, input_shape, orig_shape, conf_thresh=0.25):
         boxes.append([x1, y1, x2, y2])
         scores.append(float(conf))
         class_ids.append(int(cls_id))
+        print(f"Detected: {CLASS_NAMES[cls_id]} with confidence {conf:.2f} at [{x1}, {y1}, {x2}, {y2}]")
         
-    for i, pred in enumerate(preds[:10]):
-        raw_obj = pred[4]
-        raw_cls_conf = pred[5:]
-        print(f"[{i:04d}] obj_conf_raw={raw_obj:.4f}  sigmoid={sigmoid(raw_obj):.4f}")
-        print(f"       cls_conf_raw={raw_cls_conf[:4]}  sigmoid={sigmoid(raw_cls_conf[:4])}")
-
-
     return boxes, scores, class_ids
 
 def draw_boxes(image, boxes, scores, class_ids):
